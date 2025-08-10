@@ -25,61 +25,39 @@ pd.options.mode.chained_assignment = None
 # Loading & Cleaning
 # ----------------------
 def load_ninjatrader_csv(path: str,
-                         datetime_col: Optional[str] = None,
-                         date_col: Optional[str] = "Date",
-                         time_col: Optional[str] = "Time",
-                         tz: Optional[str] = None,
-                         infer_datetime_format: bool = True) -> pd.DataFrame:
+                         tz: Optional[str] = None) -> pd.DataFrame:
     """
     Load NinjaTrader exported CSV into a normalized DataFrame with a DateTime index and columns:
     Open, High, Low, Close, Volume
+    
+    Expected format: 'YYYYMMDD HHMMSS;open;high;low;close;volume'
+    Example: '20250612 040100;6062.5;6062.5;6062.25;6062.5;14'
     """
-    df = pd.read_csv(path, dtype=str)
-    # Normalize column names
-    df.columns = [c.strip() for c in df.columns]
-    cols = {c.lower(): c for c in df.columns}
-
-    # Identify OHLCV names
-    def find_col(possible_names):
-        for n in possible_names:
-            if n in cols:
-                return cols[n]
-        return None
-
-    open_col = find_col(['open','o'])
-    high_col = find_col(['high','h'])
-    low_col = find_col(['low','l'])
-    close_col = find_col(['close','c','last'])
-    vol_col = find_col(['volume','vol','v'])
-
-    if datetime_col and datetime_col in df.columns:
-        dt = pd.to_datetime(df[datetime_col], infer_datetime_format=infer_datetime_format, errors='coerce')
-    else:
-        # try combined Date & Time
-        if date_col in df.columns and time_col in df.columns:
-            dt = pd.to_datetime(df[date_col].str.strip() + ' ' + df[time_col].str.strip(),
-                                infer_datetime_format=infer_datetime_format, errors='coerce')
-        else:
-            # try common single columns
-            common_dt = find_col(['datetime','date/time','date_time','timestamp'])
-            if common_dt:
-                dt = pd.to_datetime(df[common_dt], infer_datetime_format=infer_datetime_format, errors='coerce')
-            else:
-                raise ValueError("Couldn't find datetime columns. Provide datetime_col or ensure 'Date' and 'Time' exist.")
-
+    # Read CSV with semicolon delimiter and no header
+    df = pd.read_csv(path, sep=';', header=None, dtype=str)
+    print(f"Raw CSV shape: {df.shape}")
+    print(f"First few rows:\n{df.head()}")
+    
+    # Assign column names based on known structure
+    df.columns = ['DateTime', 'Open', 'High', 'Low', 'Close', 'Volume']
+    
+    # Parse datetime from 'YYYYMMDD HHMMSS' format
+    dt = pd.to_datetime(df['DateTime'], format='%Y%m%d %H%M%S', errors='coerce')
+    print(f"Parsed datetime count: {dt.notna().sum()} out of {len(dt)}")
+    print(f"Sample parsed dates: {dt.dropna().head()}")
+    
     if tz:
         dt = dt.dt.tz_localize(tz)
-    # Build final DF
-    data = {}
-    def to_numeric_or_na(col):
-        return pd.to_numeric(df[col], errors='coerce') if col else None
-
-    data['Open'] = to_numeric_or_na(open_col)
-    data['High'] = to_numeric_or_na(high_col)
-    data['Low'] = to_numeric_or_na(low_col)
-    data['Close'] = to_numeric_or_na(close_col)
-    data['Volume'] = to_numeric_or_na(vol_col) if vol_col else 0
-
+    
+    # Convert OHLCV to numeric
+    data = {
+        'Open': pd.to_numeric(df['Open'], errors='coerce'),
+        'High': pd.to_numeric(df['High'], errors='coerce'),
+        'Low': pd.to_numeric(df['Low'], errors='coerce'),
+        'Close': pd.to_numeric(df['Close'], errors='coerce'),
+        'Volume': pd.to_numeric(df['Volume'], errors='coerce')
+    }
+    
     out = pd.DataFrame(data, index=dt)
     out.index.name = 'DateTime'
     # Drop rows missing core prices
@@ -219,26 +197,29 @@ def make_candle_figure(df: pd.DataFrame, title: str = "Chart"):
 # CLI / example usage
 # ----------------------
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Process NinjaTrader CSV export.")
-    parser.add_argument("input", help="Path to NinjaTrader CSV export")
-    parser.add_argument("--out", help="Output base path (dir). default=./output", default="./output")
-    parser.add_argument("--tz", help="Timezone to localize (e.g., 'America/New_York')", default=None)
-    parser.add_argument("--resample", help="Resample timeframe e.g., '1min','5min','1H'", default="1min")
-    parser.add_argument("--fmt", help="Export format: parquet or csv", default="parquet")
-    args = parser.parse_args()
+    import typer
 
-    print("Loading:", args.input)
-    df = load_ninjatrader_csv(args.input, tz=args.tz)
-    print(f"Loaded {len(df)} rows from {df.index.min()} to {df.index.max()}")
-    bars = resample_bars(df, args.resample)
-    bars_ind = add_indicators(bars)
-    out_file = os.path.join(args.out, f"processed_{args.resample}.{args.fmt}")
-    export_df(bars_ind, out_file, fmt=args.fmt)
-    print("Exported to", out_file)
-    # Optionally show chart
-    try:
-        fig = make_candle_figure(bars_ind, title=f"Processed {os.path.basename(args.input)}")
-        fig.show()
-    except Exception as e:
-        print("Plot failed (headless?). Saved outputs only. Error:", e)
+    def main(
+        input_file: str = typer.Argument(help="Path to NinjaTrader CSV export"),
+        out: str = typer.Option("./output", help="Output base path (dir)"),
+        tz: Optional[str] = typer.Option(None, help="Timezone to localize (e.g., 'America/New_York')"),
+        resample: str = typer.Option("1min", help="Resample timeframe e.g., '1min','5min','1H'"),
+        fmt: str = typer.Option("parquet", help="Export format: parquet or csv")
+    ):
+        """Process NinjaTrader CSV export."""
+        print("Loading:", input_file)
+        df = load_ninjatrader_csv(input_file, tz=tz)
+        print(f"Loaded {len(df)} rows from {df.index.min()} to {df.index.max()}")
+        bars = resample_bars(df, resample)
+        bars_ind = add_indicators(bars)
+        out_file = os.path.join(out, f"processed_{resample}.{fmt}")
+        export_df(bars_ind, out_file, fmt=fmt)
+        print("Exported to", out_file)
+        # Optionally show chart
+        try:
+            fig = make_candle_figure(bars_ind, title=f"Processed {os.path.basename(input_file)}")
+            fig.show()
+        except Exception as e:
+            print("Plot failed (headless?). Saved outputs only. Error:", e)
+
+    typer.run(main)

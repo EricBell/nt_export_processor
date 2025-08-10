@@ -35,30 +35,27 @@ def load_ninjatrader_csv(path: str,
     """
     # Read CSV with semicolon delimiter and no header
     df = pd.read_csv(path, sep=';', header=None, dtype=str)
-    print(f"Raw CSV shape: {df.shape}")
-    print(f"First few rows:\n{df.head()}")
     
     # Assign column names based on known structure
     df.columns = ['DateTime', 'Open', 'High', 'Low', 'Close', 'Volume']
     
     # Parse datetime from 'YYYYMMDD HHMMSS' format
     dt = pd.to_datetime(df['DateTime'], format='%Y%m%d %H%M%S', errors='coerce')
-    print(f"Parsed datetime count: {dt.notna().sum()} out of {len(dt)}")
-    print(f"Sample parsed dates: {dt.dropna().head()}")
     
     if tz:
         dt = dt.dt.tz_localize(tz)
     
-    # Convert OHLCV to numeric
-    data = {
+    # Convert OHLCV to numeric and create DataFrame
+    out = pd.DataFrame({
         'Open': pd.to_numeric(df['Open'], errors='coerce'),
         'High': pd.to_numeric(df['High'], errors='coerce'),
         'Low': pd.to_numeric(df['Low'], errors='coerce'),
         'Close': pd.to_numeric(df['Close'], errors='coerce'),
         'Volume': pd.to_numeric(df['Volume'], errors='coerce')
-    }
+    })
     
-    out = pd.DataFrame(data, index=dt)
+    # Set the datetime index
+    out.index = dt
     out.index.name = 'DateTime'
     # Drop rows missing core prices
     out = out.dropna(subset=['Open','High','Low','Close'])
@@ -204,7 +201,8 @@ if __name__ == "__main__":
         out: str = typer.Option("./output", help="Output base path (dir)"),
         tz: Optional[str] = typer.Option(None, help="Timezone to localize (e.g., 'America/New_York')"),
         resample: str = typer.Option("1min", help="Resample timeframe e.g., '1min','5min','1H'"),
-        fmt: str = typer.Option("parquet", help="Export format: parquet or csv")
+        fmt: str = typer.Option("parquet", help="Export format: parquet or csv"),
+        no_plot: bool = typer.Option(False, "--no-plot", help="Skip plot display")
     ):
         """Process NinjaTrader CSV export."""
         print("Loading:", input_file)
@@ -216,10 +214,11 @@ if __name__ == "__main__":
         export_df(bars_ind, out_file, fmt=fmt)
         print("Exported to", out_file)
         # Optionally show chart
-        try:
-            fig = make_candle_figure(bars_ind, title=f"Processed {os.path.basename(input_file)}")
-            fig.show()
-        except Exception as e:
-            print("Plot failed (headless?). Saved outputs only. Error:", e)
+        if not no_plot:
+            try:
+                fig = make_candle_figure(bars_ind, title=f"Processed {os.path.basename(input_file)}")
+                fig.show()
+            except Exception as e:
+                print("Plot failed (headless?). Saved outputs only. Error:", e)
 
     typer.run(main)

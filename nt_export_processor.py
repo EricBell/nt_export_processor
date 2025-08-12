@@ -24,6 +24,56 @@ pd.options.mode.chained_assignment = None
 # ----------------------
 # Loading & Cleaning
 # ----------------------
+def detect_file_format(path: str) -> str:
+    """
+    Detect if file is raw NT8 format or resampled CSV format.
+    Returns 'nt8' for raw NinjaTrader format, 'resampled' for processed CSV.
+    """
+    with open(path, 'r') as f:
+        first_line = f.readline().strip()
+    
+    # Check if first line has headers (resampled format)
+    if 'DateTime' in first_line or 'Open' in first_line or first_line.count(',') > 3:
+        return 'resampled'
+    
+    # Check NT8 format: YYYYMMDD HHMMSS;price;price;price;price;volume
+    if ';' in first_line and len(first_line.split(';')) == 6:
+        datetime_part = first_line.split(';')[0]
+        if len(datetime_part) == 15 and datetime_part[8] == ' ':
+            return 'nt8'
+    
+    return 'unknown'
+
+def load_resampled_csv(path: str, tz: Optional[str] = None) -> pd.DataFrame:
+    """
+    Load previously resampled CSV file with DateTime index and OHLCV columns.
+    Expected format: CSV with DateTime column and Open,High,Low,Close,Volume columns.
+    """
+    df = pd.read_csv(path)
+    
+    # Parse datetime column
+    dt = pd.to_datetime(df['DateTime'], errors='coerce')
+    
+    if tz:
+        dt = dt.dt.tz_localize(tz)
+    
+    # Create DataFrame with OHLCV data
+    out = pd.DataFrame({
+        'Open': pd.to_numeric(df['Open'], errors='coerce'),
+        'High': pd.to_numeric(df['High'], errors='coerce'),
+        'Low': pd.to_numeric(df['Low'], errors='coerce'),
+        'Close': pd.to_numeric(df['Close'], errors='coerce'),
+        'Volume': pd.to_numeric(df['Volume'], errors='coerce')
+    })
+    
+    # Set the datetime index
+    out.index = dt
+    out.index.name = 'DateTime'
+    # Drop rows missing core prices
+    out = out.dropna(subset=['Open','High','Low','Close'])
+    # Sort index
+    out = out.sort_index()
+    return out
 def load_ninjatrader_csv(path: str,
                          tz: Optional[str] = None) -> pd.DataFrame:
     """
@@ -144,6 +194,15 @@ def add_indicators(df: pd.DataFrame,
 # ----------------------
 # Export helpers
 # ----------------------
+def generate_resampled_filename(input_path: str, timeframe: str, output_dir: str) -> str:
+    """
+    Generate output filename for resampled data.
+    Example: input_path='data/MES-1-day-sample.txt', timeframe='3min'
+             returns: 'output_dir/MES-1-day-sample_3min.csv'
+    """
+    base_name = os.path.splitext(os.path.basename(input_path))[0]
+    output_filename = f"{base_name}_{timeframe}.csv"
+    return os.path.join(output_dir, output_filename)
 def export_df(df: pd.DataFrame, path: str, fmt: str = 'parquet'):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if fmt == 'parquet':
@@ -202,23 +261,41 @@ if __name__ == "__main__":
         tz: Optional[str] = typer.Option(None, help="Timezone to localize (e.g., 'America/New_York')"),
         resample: str = typer.Option("1min", help="Resample timeframe e.g., '1min','5min','1H'"),
         fmt: str = typer.Option("parquet", help="Export format: parquet or csv"),
-        no_plot: bool = typer.Option(False, "--no-plot", help="Skip plot display")
+        no_plot: bool = typer.Option(False, "--no-plot", help="Skip plot display"),
+        resample_only: bool = typer.Option(False, "--resample-only", help="Only resample data, skip indicators and plotting")
     ):
         """Process NinjaTrader CSV export."""
         print("Loading:", input_file)
-        df = load_ninjatrader_csv(input_file, tz=tz)
+        
+        # Detect file format and load accordingly
+        file_format = detect_file_format(input_file)
+        if file_format == 'nt8':
+            df = load_ninjatrader_csv(input_file, tz=tz)
+        elif file_format == 'resampled':
+            df = load_resampled_csv(input_file, tz=tz)
+        else:
+            raise ValueError(f"Unknown file format for {input_file}")
+        
         print(f"Loaded {len(df)} rows from {df.index.min()} to {df.index.max()}")
         bars = resample_bars(df, resample)
-        bars_ind = add_indicators(bars)
-        out_file = os.path.join(out, f"processed_{resample}.{fmt}")
-        export_df(bars_ind, out_file, fmt=fmt)
-        print("Exported to", out_file)
-        # Optionally show chart
-        if not no_plot:
-            try:
-                fig = make_candle_figure(bars_ind, title=f"Processed {os.path.basename(input_file)}")
-                fig.show()
-            except Exception as e:
-                print("Plot failed (headless?). Saved outputs only. Error:", e)
+        
+        if resample_only:
+            # Resample-only mode: just save resampled data as CSV
+            out_file = generate_resampled_filename(input_file, resample, out)
+            export_df(bars, out_file, fmt='csv')
+            print(f"Resampled data exported to {out_file}")
+        else:
+            # Full processing mode: indicators + plotting + export
+            bars_ind = add_indicators(bars)
+            out_file = os.path.join(out, f"processed_{resample}.{fmt}")
+            export_df(bars_ind, out_file, fmt=fmt)
+            print("Exported to", out_file)
+            # Optionally show chart
+            if not no_plot:
+                try:
+                    fig = make_candle_figure(bars_ind, title=f"Processed {os.path.basename(input_file)}")
+                    fig.show()
+                except Exception as e:
+                    print("Plot failed (headless?). Saved outputs only. Error:", e)
 
     typer.run(main)

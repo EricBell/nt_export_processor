@@ -51,9 +51,9 @@ class MESFuturesTrifectaBacktester:
             },
             "risk_management": {
                 "stop_loss": {"type": "ATR", "multiplier": 1.0},
-                "take_profit": {"type": "ATR", "multiplier": 1.0},  # Back to original 1:1
+                "take_profit": {"type": "ATR", "multiplier": 1.0},
                 "position_sizing": {
-                    "risk_per_trade": 50.0,
+                    "risk_per_trade": 40.0,  # Reduced from 50.0 to 40.0
                     "max_contracts": 10
                 }
             },

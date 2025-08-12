@@ -216,7 +216,7 @@ class MESFuturesTrifectaBacktester:
         df['price_vs_vwap'] = df.apply(lambda x: 'above' if x['close'] > x['vwap'] else 
                                       ('below' if x['close'] < x['vwap'] else 'equal'), axis=1)
         
-        # Calculate ATR for stop loss and take profit
+        # Calculate ATR for stop loss and take profit (move before VWAP distance calculation)
         atr_period = self.params['indicators']['atr']['period']
         high_low = df['high'] - df['low']
         high_close = (df['high'] - df['close'].shift(1)).abs()
@@ -226,25 +226,33 @@ class MESFuturesTrifectaBacktester:
         true_range = ranges.max(axis=1)
         df['atr'] = true_range.rolling(window=atr_period).mean()
         
+        # Calculate distance from VWAP as percentage
+        df['vwap_distance'] = (df['close'] - df['vwap']) / df['close'] * 100
+        
+        # Flag if price is extended from VWAP (more than 0.5 ATR away)
+        df['price_extended'] = abs(df['vwap_distance']) > (0.5 * df['atr'] / df['close'] * 100)
+        
         # Flag potential entry points based on rules
-        # Long signals
+        # Long signals - add condition to avoid extended prices
         df['long_signal'] = (
             (df['ema9_slope_dir'] == 'positive') & 
             (df['macd_hist_dir'] == 'positive') & 
             (df['cmf_dir'] == 'positive') & 
             (df['price_vs_vwap'] == 'above') & 
             (df['vol_filter'] == True) &
-            (df['macd_increasing'] == True)  # NEW: MACD histogram must be increasing
+            (df['macd_increasing'] == True) &
+            (df['price_extended'] == False)  # NEW: Avoid entering when price is already extended
         )
-
-        # Short signals
+        
+        # Short signals - add condition to avoid extended prices
         df['short_signal'] = (
             (df['ema9_slope_dir'] == 'negative') & 
             (df['macd_hist_dir'] == 'negative') & 
             (df['cmf_dir'] == 'negative') & 
             (df['price_vs_vwap'] == 'below') & 
             (df['vol_filter'] == True) &
-            (df['macd_increasing'] == True)  # NEW: MACD histogram must be increasing (more negative)
+            (df['macd_increasing'] == True) &
+            (df['price_extended'] == False)  # NEW: Avoid entering when price is already extended
         )
         
         # Save the updated dataframe

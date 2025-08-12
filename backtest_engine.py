@@ -160,17 +160,21 @@ class MESFuturesTrifectaBacktester:
         
         # Calculate Money Flow (CMF)
         cmf_period = self.params['indicators']['money_flow']['period']
-        df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
-        df['money_flow'] = df['typical_price'] * df['volume']
+        high = df['high']
+        low = df['low']
+        close = df['close']
+        volume = df['volume']
         
-        # Calculate money flow volume
-        df['mfv'] = df.apply(lambda row: 
-                          row['money_flow'] if row['typical_price'] > row['typical_price'].shift(1) else
-                          (-row['money_flow'] if row['typical_price'] < row['typical_price'].shift(1) else 0), 
-                          axis=1)
+        # Money Flow Multiplier
+        mfm = ((close - low) - (high - close)) / (high - low)
+        mfm = mfm.fillna(0)  # Handle division by zero when high == low
         
-        # Calculate CMF
-        df['cmf'] = df['mfv'].rolling(window=cmf_period).sum() / df['volume'].rolling(window=cmf_period).sum()
+        # Money Flow Volume
+        mfv = mfm * volume
+        
+        # CMF = Sum of MFV over window / Sum of Volume over window
+        df['cmf'] = mfv.rolling(window=cmf_period).sum() / volume.rolling(window=cmf_period).sum()
+        df['cmf'] = df['cmf'].fillna(0)
         df['cmf_dir'] = df['cmf'].apply(lambda x: 'positive' if x > 0 else ('negative' if x < 0 else 'flat'))
         
         # Calculate Volume SMA
@@ -181,15 +185,18 @@ class MESFuturesTrifectaBacktester:
         df['vol_filter'] = df['vol_ratio'] >= vol_threshold
         
         # Calculate VWAP
+        # Calculate typical price for VWAP
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        
         if self.params['indicators']['vwap']['reset_on_session']:
             # Reset VWAP each session (day)
-            df['pv'] = df['typical_price'] * df['volume']
+            df['pv'] = typical_price * df['volume']
             df['cum_pv'] = df.groupby('date')['pv'].cumsum()
             df['cum_vol'] = df.groupby('date')['volume'].cumsum()
             df['vwap'] = df['cum_pv'] / df['cum_vol']
         else:
             # Continuous VWAP
-            df['pv'] = df['typical_price'] * df['volume']
+            df['pv'] = typical_price * df['volume']
             df['cum_pv'] = df['pv'].cumsum()
             df['cum_vol'] = df['volume'].cumsum()
             df['vwap'] = df['cum_pv'] / df['cum_vol']

@@ -251,15 +251,13 @@ def cmf(df: pd.DataFrame, window: int = 20) -> pd.Series:
 # Indicator runner
 # ----------------------
 def add_indicators(df: pd.DataFrame,
-                   ema_windows=(9, 21),
-                   rsi_window=14,
+                   ema_windows=(9,),
                    macd_params=(12, 26, 9),
                    atr_window=14,
                    cmf_window=20) -> pd.DataFrame:
     dd = df.copy()
     for w in ema_windows:
         dd[f"EMA_{w}"] = ema(dd['Close'], w)
-    dd[f"RSI_{rsi_window}"] = rsi(dd['Close'], rsi_window)
     macd_line, signal_line, hist = macd(dd['Close'], *macd_params)
     dd['MACD'] = macd_line
     dd['MACD_Signal'] = signal_line

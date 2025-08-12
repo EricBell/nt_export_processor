@@ -114,8 +114,7 @@ The script automatically detects the format and loads accordingly.
   - Can chain resample operations (e.g., 1min → 3min → 15min)
   - Skips indicators and plotting for faster processing
 - **Technical Indicators**:
-  - Exponential Moving Average (EMA): 9, 21 periods
-  - Relative Strength Index (RSI): 14 periods
+  - Exponential Moving Average (EMA): 9 periods
   - MACD: 12/26/9 parameters
   - Average True Range (ATR): 14 periods
   - Chaikin Money Flow (CMF): 20 periods
@@ -159,7 +158,7 @@ bars_with_indicators = add_indicators(bars)
 ## Output
 
 ### Full Processing Mode
-- OHLCV price data with technical indicators (EMA, RSI, MACD, ATR, CMF)
+- OHLCV price data with technical indicators (EMA, MACD, ATR, CMF)
 - Interactive charts saved as HTML files (`chart_{timeframe}.html`)
 - Exported processed data in specified format (Parquet or CSV)
 

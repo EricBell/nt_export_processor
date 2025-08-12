@@ -24,25 +24,48 @@ pd.options.mode.chained_assignment = None
 # ----------------------
 # Loading & Cleaning
 # ----------------------
-def detect_file_format(path: str) -> str:
+def detect_file_format(path: str) -> tuple[str, str]:
     """
-    Detect if file is raw NT8 format or resampled CSV format.
-    Returns 'nt8' for raw NinjaTrader format, 'resampled' for processed CSV.
+    Detect file format: NT8 CSV, resampled CSV, or Parquet.
+    Returns tuple: (format, timeframe) where format is 'nt8', 'resampled', or 'parquet',
+    and timeframe is extracted from filename if present.
     """
-    with open(path, 'r') as f:
-        first_line = f.readline().strip()
+    # Extract timeframe from filename if present (e.g., "file_3min.csv" -> "3min")
+    filename = os.path.basename(path)
+    timeframe = None
+    if '_' in filename:
+        parts = filename.split('_')
+        for part in parts:
+            # Look for timeframe patterns like "3min", "1H", "5min"
+            if any(unit in part.lower() for unit in ['min', 'h', 'd']) and any(c.isdigit() for c in part):
+                timeframe = part.split('.')[0]  # Remove extension
+                break
     
-    # Check if first line has headers (resampled format)
-    if 'DateTime' in first_line or 'Open' in first_line or first_line.count(',') > 3:
-        return 'resampled'
+    # Check if it's a Parquet file
+    if path.lower().endswith('.parquet'):
+        return 'parquet', timeframe
     
-    # Check NT8 format: YYYYMMDD HHMMSS;price;price;price;price;volume
-    if ';' in first_line and len(first_line.split(';')) == 6:
-        datetime_part = first_line.split(';')[0]
-        if len(datetime_part) == 15 and datetime_part[8] == ' ':
-            return 'nt8'
+    # For text files, read first line to detect format
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            first_line = f.readline().strip()
+        
+        # Check if first line has headers (resampled CSV format)
+        if 'DateTime' in first_line or 'Open' in first_line or first_line.count(',') > 3:
+            return 'resampled', timeframe
+        
+        # Check NT8 format: YYYYMMDD HHMMSS;price;price;price;price;volume
+        if ';' in first_line and len(first_line.split(';')) == 6:
+            datetime_part = first_line.split(';')[0]
+            if len(datetime_part) == 15 and datetime_part[8] == ' ':
+                return 'nt8', timeframe
     
-    return 'unknown'
+    except UnicodeDecodeError:
+        # If we can't decode as text, it might be a binary format like Parquet
+        if path.lower().endswith(('.parquet', '.pqt')):
+            return 'parquet', timeframe
+    
+    return 'unknown', timeframe
 
 def load_resampled_csv(path: str, tz: Optional[str] = None) -> pd.DataFrame:
     """
@@ -74,6 +97,33 @@ def load_resampled_csv(path: str, tz: Optional[str] = None) -> pd.DataFrame:
     # Sort index
     out = out.sort_index()
     return out
+
+def load_parquet_file(path: str, tz: Optional[str] = None) -> pd.DataFrame:
+    """
+    Load Parquet file with DateTime index and OHLCV columns.
+    """
+    df = pd.read_parquet(path)
+    
+    # Ensure DateTime is the index
+    if 'DateTime' in df.columns:
+        df = df.set_index('DateTime')
+    
+    # Apply timezone if specified
+    if tz and df.index.tz is None:
+        df.index = df.index.tz_localize(tz)
+    
+    # Ensure we have the expected OHLCV columns
+    required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}")
+    
+    # Drop rows missing core prices
+    df = df.dropna(subset=['Open','High','Low','Close'])
+    # Sort index
+    df = df.sort_index()
+    return df
+
 def load_ninjatrader_csv(path: str,
                          tz: Optional[str] = None) -> pd.DataFrame:
     """
@@ -262,22 +312,39 @@ if __name__ == "__main__":
         resample: str = typer.Option("1min", help="Resample timeframe e.g., '1min','5min','1H'"),
         fmt: str = typer.Option("parquet", help="Export format: parquet or csv"),
         no_plot: bool = typer.Option(False, "--no-plot", help="Skip plot display"),
+        save_plot: bool = typer.Option(False, "--save-plot", help="Save interactive plot as HTML file"),
         resample_only: bool = typer.Option(False, "--resample-only", help="Only resample data, skip indicators and plotting")
     ):
         """Process NinjaTrader CSV export."""
         print("Loading:", input_file)
         
         # Detect file format and load accordingly
-        file_format = detect_file_format(input_file)
+        file_format, detected_timeframe = detect_file_format(input_file)
         if file_format == 'nt8':
             df = load_ninjatrader_csv(input_file, tz=tz)
         elif file_format == 'resampled':
             df = load_resampled_csv(input_file, tz=tz)
+            # If resampled file and default resample, suggest better timeframe
+            if resample == "1min" and detected_timeframe:
+                print(f"Warning: Input file appears to be {detected_timeframe} data. Consider using --resample with a larger timeframe (e.g., 5min, 15min, 1H)")
+        elif file_format == 'parquet':
+            df = load_parquet_file(input_file, tz=tz)
+            # If Parquet file and default resample, suggest better timeframe
+            if resample == "1min" and detected_timeframe:
+                print(f"Warning: Input file appears to be {detected_timeframe} data. Consider using --resample with a larger timeframe (e.g., 5min, 15min, 1H)")
         else:
             raise ValueError(f"Unknown file format for {input_file}")
         
         print(f"Loaded {len(df)} rows from {df.index.min()} to {df.index.max()}")
-        bars = resample_bars(df, resample)
+        
+        # Skip resampling if input timeframe matches target timeframe
+        if detected_timeframe and detected_timeframe.lower() == resample.lower():
+            print(f"Input data is already in {resample} timeframe. Skipping resample step.")
+            bars = df.copy()
+        else:
+            bars = resample_bars(df, resample)
+            if len(bars) != len(df):
+                print(f"Resampled from {len(df)} to {len(bars)} bars ({resample} timeframe)")
         
         if resample_only:
             # Resample-only mode: just save resampled data as CSV
@@ -290,12 +357,35 @@ if __name__ == "__main__":
             out_file = os.path.join(out, f"processed_{resample}.{fmt}")
             export_df(bars_ind, out_file, fmt=fmt)
             print("Exported to", out_file)
-            # Optionally show chart
-            if not no_plot:
+            # Handle plotting
+            if not no_plot or save_plot:
                 try:
                     fig = make_candle_figure(bars_ind, title=f"Processed {os.path.basename(input_file)}")
-                    fig.show()
+                    
+                    # Save plot to HTML file if requested
+                    if save_plot:
+                        plot_filename = os.path.join(out, f"chart_{resample}.html")
+                        fig.write_html(plot_filename)
+                        print(f"Interactive chart saved to: {plot_filename}")
+                    
+                    # Show plot if not in headless environment and not disabled
+                    if not no_plot:
+                        import sys
+                        headless = (
+                            'DISPLAY' not in os.environ or 
+                            os.environ.get('WSL_DISTRO_NAME') is not None or
+                            sys.platform.startswith('linux')
+                        )
+                        
+                        if headless:
+                            if not save_plot:
+                                print("Headless/WSL environment detected. Use --save-plot to save chart as HTML.")
+                        else:
+                            fig.show()
+                            
                 except Exception as e:
-                    print("Plot failed (headless?). Saved outputs only. Error:", e)
+                    print(f"Plot handling failed. Error: {e}")
+            
+        print("Processing complete.")
 
     typer.run(main)

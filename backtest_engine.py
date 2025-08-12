@@ -144,6 +144,13 @@ class MESFuturesTrifectaBacktester:
         """Calculate all indicators required for the strategy"""
         print("Calculating indicators...")
         df = self.data
+
+        # Extract hour from timestamp
+        df['hour'] = pd.to_datetime(df['timestamp']).dt.hour
+
+        # Only trade during US regular trading hours (9:30 AM - 4:00 PM ET)
+        # Hours 13:30 - 20:00 UTC during DST
+        df['market_hours'] = (df['hour'] >= 13) & (df['hour'] < 20)        
         
         # Calculate EMA9 (tradeline)
         df['ema9'] = df['close'].ewm(span=self.params['indicators']['tradeline']['period'], adjust=False).mean()
@@ -254,6 +261,10 @@ class MESFuturesTrifectaBacktester:
             (df['macd_increasing'] == True) &
             (df['price_extended'] == False)  # NEW: Avoid entering when price is already extended
         )
+
+        # Apply market hours filter to signals
+        df['long_signal'] = df['long_signal'] & df['market_hours']
+        df['short_signal'] = df['short_signal'] & df['market_hours']
         
         # Save the updated dataframe
         self.data = df

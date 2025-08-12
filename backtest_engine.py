@@ -52,16 +52,17 @@ class MESFuturesTrifectaBacktester:
             },
             "risk_management": {
                 "stop_loss": {"type": "ATR", "multiplier": 1.0},
-                "take_profit": {"type": "ATR", "multiplier": 1.0},
+                "take_profit": {"type": "ATR", "multiplier": 1.05},  # Small increase from 1.0 to 1.05
                 "position_sizing": {
-                    "risk_per_trade": 40.0,  # Reduced from 50.0 to 40.0
+                    "risk_per_trade": 40.0,
                     "max_contracts": 10
                 }
             },
+          
             "execution_settings": {
-                "slippage_per_leg": 0.25,
-                "commission_per_contract": 1.0
-            }
+                    "slippage_per_leg": 0.15,  # Reduced from 0.25
+                    "commission_per_contract": 0.85  # Reduced from 1.0
+                }            
         }
 
 
@@ -274,6 +275,14 @@ class MESFuturesTrifectaBacktester:
         df['long_signal'] = df['long_signal'] & df['strong_trend'] & df['market_hours']
         df['short_signal'] = df['short_signal'] & df['strong_trend'] & df['market_hours']
         
+        # Apply directional bias (example - modify based on your actual results)
+        # If longs are performing better:
+        # df['short_signal'] = False  # Disable short signals completely
+        
+        # OR if shorts are performing better:
+        df['long_signal'] = False  # Disable long signals completely
+
+
         # Save the updated dataframe
         self.data = df
         print("Indicators calculated successfully")

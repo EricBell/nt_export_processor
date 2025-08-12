@@ -219,18 +219,44 @@ def atr(df: pd.DataFrame, window: int = 14) -> pd.Series:
     atr = tr.ewm(alpha=1/window, adjust=False).mean()
     return atr
 
+def cmf(df: pd.DataFrame, window: int = 20) -> pd.Series:
+    """
+    Chaikin Money Flow (CMF) - measures buying and selling pressure.
+    
+    CMF = Sum(Money Flow Volume for n periods) / Sum(Volume for n periods)
+    Money Flow Volume = Volume * Money Flow Multiplier
+    Money Flow Multiplier = ((Close - Low) - (High - Close)) / (High - Low)
+    
+    Positive CMF indicates buying pressure, negative indicates selling pressure.
+    """
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
+    volume = df['Volume']
+    
+    # Money Flow Multiplier
+    mfm = ((close - low) - (high - close)) / (high - low)
+    mfm = mfm.fillna(0)  # Handle division by zero when high == low
+    
+    # Money Flow Volume
+    mfv = mfm * volume
+    
+    # CMF = Sum of MFV over window / Sum of Volume over window
+    cmf_values = mfv.rolling(window).sum() / volume.rolling(window).sum()
+    cmf_values = cmf_values.fillna(0)
+    
+    return cmf_values
+
 # ----------------------
 # Indicator runner
 # ----------------------
 def add_indicators(df: pd.DataFrame,
-                   sma_windows=(10, 20, 50),
                    ema_windows=(9, 21),
                    rsi_window=14,
                    macd_params=(12, 26, 9),
-                   atr_window=14) -> pd.DataFrame:
+                   atr_window=14,
+                   cmf_window=20) -> pd.DataFrame:
     dd = df.copy()
-    for w in sma_windows:
-        dd[f"SMA_{w}"] = sma(dd['Close'], w)
     for w in ema_windows:
         dd[f"EMA_{w}"] = ema(dd['Close'], w)
     dd[f"RSI_{rsi_window}"] = rsi(dd['Close'], rsi_window)
@@ -239,6 +265,7 @@ def add_indicators(df: pd.DataFrame,
     dd['MACD_Signal'] = signal_line
     dd['MACD_Hist'] = hist
     dd[f"ATR_{atr_window}"] = atr(dd, atr_window)
+    dd[f"CMF_{cmf_window}"] = cmf(dd, cmf_window)
     return dd
 
 # ----------------------
@@ -276,26 +303,57 @@ def make_candle_figure(df: pd.DataFrame, title: str = "Chart"):
                                  open=df['Open'], high=df['High'],
                                  low=df['Low'], close=df['Close'],
                                  name='Price'))
-    # Add SMA/EMA if present (first two)
+    # Add EMA if present
     for col in df.columns:
-        if col.startswith('SMA_') or col.startswith('EMA_'):
+        if col.startswith('EMA_'):
             fig.add_trace(go.Scatter(x=df.index, y=df[col], name=col, line=dict(width=1)))
-    # MACD subplot
-    if 'MACD' in df.columns:
+    # Multi-panel subplot for MACD and CMF
+    if 'MACD' in df.columns or any(col.startswith('CMF_') for col in df.columns):
         from plotly.subplots import make_subplots
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                            vertical_spacing=0.05,
-                            row_heights=[0.7, 0.3])
+        
+        # Determine number of subplots needed
+        has_macd = 'MACD' in df.columns
+        has_cmf = any(col.startswith('CMF_') for col in df.columns)
+        
+        if has_macd and has_cmf:
+            # 3 panels: Price, MACD, CMF
+            fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                                vertical_spacing=0.02,
+                                row_heights=[0.6, 0.2, 0.2],
+                                subplot_titles=('Price & EMAs', 'MACD', 'CMF'))
+            cmf_row = 3
+        else:
+            # 2 panels: Price and either MACD or CMF
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                vertical_spacing=0.05,
+                                row_heights=[0.7, 0.3])
+            cmf_row = 2
+        
+        # Add main price chart
         fig.add_trace(go.Candlestick(x=df.index,
                                      open=df['Open'], high=df['High'],
                                      low=df['Low'], close=df['Close'],
                                      name='Price'), row=1, col=1)
+        
+        # Add EMA lines
         for col in df.columns:
-            if col.startswith('SMA_') or col.startswith('EMA_'):
+            if col.startswith('EMA_'):
                 fig.add_trace(go.Scatter(x=df.index, y=df[col], name=col, line=dict(width=1)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='MACD'), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MACD_Signal'], name='MACD_Signal'), row=2, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name='MACD_Hist'), row=2, col=1)
+        
+        # Add MACD if present
+        if has_macd:
+            macd_row = 2 if not has_cmf else 2
+            fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='MACD'), row=macd_row, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['MACD_Signal'], name='MACD_Signal'), row=macd_row, col=1)
+            fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name='MACD_Hist'), row=macd_row, col=1)
+        
+        # Add CMF if present
+        if has_cmf:
+            cmf_col = [col for col in df.columns if col.startswith('CMF_')][0]
+            fig.add_trace(go.Scatter(x=df.index, y=df[cmf_col], name=cmf_col, 
+                                   line=dict(color='orange', width=2)), row=cmf_row, col=1)
+            # Add zero line for CMF
+            fig.add_hline(y=0, line_dash="dash", line_color="gray", row=cmf_row, col=1)
     fig.update_layout(title=title, xaxis_rangeslider_visible=False)
     return fig
 

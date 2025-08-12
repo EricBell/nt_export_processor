@@ -5,4 +5,4 @@ matplotlib
 plotly
 typer
 pyarrow
-
+ta>=0.10.1

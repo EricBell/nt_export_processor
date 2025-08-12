@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from ta.trend import ADXIndicator
 import os
 from datetime import datetime
 import warnings
@@ -145,13 +146,6 @@ class MESFuturesTrifectaBacktester:
         print("Calculating indicators...")
         df = self.data
 
-        # Extract hour from timestamp
-        df['hour'] = pd.to_datetime(df['timestamp']).dt.hour
-
-        # Only trade during US regular trading hours (9:30 AM - 4:00 PM ET)
-        # Hours 13:30 - 20:00 UTC during DST
-        df['market_hours'] = (df['hour'] >= 13) & (df['hour'] < 20)        
-        
         # Calculate EMA9 (tradeline)
         df['ema9'] = df['close'].ewm(span=self.params['indicators']['tradeline']['period'], adjust=False).mean()
         
@@ -262,9 +256,23 @@ class MESFuturesTrifectaBacktester:
             (df['price_extended'] == False)  # NEW: Avoid entering when price is already extended
         )
 
-        # Apply market hours filter to signals
-        df['long_signal'] = df['long_signal'] & df['market_hours']
-        df['short_signal'] = df['short_signal'] & df['market_hours']
+        # Extract hour from timestamp
+        df['hour'] = pd.to_datetime(df['timestamp']).dt.hour
+
+        # Only trade during US regular trading hours (9:30 AM - 4:00 PM ET)
+        # Hours 13:30 - 20:00 UTC during DST
+        df['market_hours'] = (df['hour'] >= 13) & (df['hour'] < 20)    
+
+        # Calculate trend strength using ADX
+        adx_indicator = ADXIndicator(df['high'], df['low'], df['close'], window=14)
+        df['adx'] = adx_indicator.adx()
+        
+        # Only trade when trend is strong enough (ADX > 20)
+        df['strong_trend'] = df['adx'] > 20
+        
+        # Apply both ADX and market hours filters to signals
+        df['long_signal'] = df['long_signal'] & df['strong_trend'] & df['market_hours']
+        df['short_signal'] = df['short_signal'] & df['strong_trend'] & df['market_hours']
         
         # Save the updated dataframe
         self.data = df

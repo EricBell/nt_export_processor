@@ -52,7 +52,8 @@ class MESFuturesTrifectaBacktester:
             },
             "risk_management": {
                 "stop_loss": {"type": "ATR", "multiplier": 1.0},
-                "take_profit": {"type": "ATR", "multiplier": 1.05},  # Small increase from 1.0 to 1.05
+                "take_profit": {"type": "ATR", "multiplier": 1.2},  # Small increase from 1.0 to 1.05
+                # "trailing_stop": {"type": "ATR", "multiplier": 0.5, "activation": 0.5},
                 "position_sizing": {
                     "risk_per_trade": 40.0,
                     "max_contracts": 10
@@ -231,8 +232,22 @@ class MESFuturesTrifectaBacktester:
         # Calculate distance from VWAP as percentage
         df['vwap_distance'] = (df['close'] - df['vwap']) / df['close'] * 100
         
-        # Flag if price is extended from VWAP (more than 0.5 ATR away)
-        df['price_extended'] = abs(df['vwap_distance']) > (0.5 * df['atr'] / df['close'] * 100)
+        # Flag if price is extended from VWAP ;# More distance allowed
+        df['price_extended'] = abs(df['vwap_distance']) > (0.8 * df['atr'] / df['close'] * 100)  
+        
+        # Extract hour from timestamp
+        df['hour'] = pd.to_datetime(df['timestamp']).dt.hour
+
+        # Only trade during US regular trading hours (9:30 AM - 4:00 PM ET)
+        # Hours 13:30 - 21:00 UTC during DST
+        df['market_hours'] = (df['hour'] >= 12) & (df['hour'] < 21)  # Extra hour before and after  
+
+        # Calculate trend strength using ADX
+        adx_indicator = ADXIndicator(df['high'], df['low'], df['close'], window=14)
+        df['adx'] = adx_indicator.adx()
+        
+        # 
+        df['strong_trend'] = df['adx'] > 15  # Lower threshold from 20 to 15
         
         # Flag potential entry points based on rules
         # Long signals - add condition to avoid extended prices
@@ -243,7 +258,9 @@ class MESFuturesTrifectaBacktester:
             (df['price_vs_vwap'] == 'above') & 
             (df['vol_filter'] == True) &
             (df['macd_increasing'] == True) &
-            (df['price_extended'] == False)  # NEW: Avoid entering when price is already extended
+            (df['price_extended'] == False) &
+            (df['market_hours'] == True) &
+            (df['strong_trend'] == True)
         )
         
         # Short signals - add condition to avoid extended prices
@@ -253,27 +270,12 @@ class MESFuturesTrifectaBacktester:
             (df['cmf_dir'] == 'negative') & 
             (df['price_vs_vwap'] == 'below') & 
             (df['vol_filter'] == True) &
-            (df['macd_increasing'] == True) &
-            (df['price_extended'] == False)  # NEW: Avoid entering when price is already extended
+            # macd_increasing requirement removed to get more trades
+            (df['price_extended'] == False) &
+            (df['market_hours'] == True) &
+            (df['strong_trend'] == True)
         )
 
-        # Extract hour from timestamp
-        df['hour'] = pd.to_datetime(df['timestamp']).dt.hour
-
-        # Only trade during US regular trading hours (9:30 AM - 4:00 PM ET)
-        # Hours 13:30 - 20:00 UTC during DST
-        df['market_hours'] = (df['hour'] >= 13) & (df['hour'] < 20)    
-
-        # Calculate trend strength using ADX
-        adx_indicator = ADXIndicator(df['high'], df['low'], df['close'], window=14)
-        df['adx'] = adx_indicator.adx()
-        
-        # Only trade when trend is strong enough (ADX > 20)
-        df['strong_trend'] = df['adx'] > 20
-        
-        # Apply both ADX and market hours filters to signals
-        df['long_signal'] = df['long_signal'] & df['strong_trend'] & df['market_hours']
-        df['short_signal'] = df['short_signal'] & df['strong_trend'] & df['market_hours']
         
         # Apply directional bias (example - modify based on your actual results)
         # If longs are performing better:

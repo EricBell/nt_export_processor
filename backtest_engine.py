@@ -36,7 +36,8 @@ class MESFuturesTrifectaBacktester:
                     "cmf": "positive",
                     "price_vs_vwap": "above",
                     "volume_filter": True,
-                    "stagger_window": 3
+                    "stagger_window": 3,
+                    "macd_increasing": True  # NEW: Only enter if MACD histogram is increasing
                 },
                 "short": {
                     "tradeline_slope": "negative",
@@ -44,23 +45,28 @@ class MESFuturesTrifectaBacktester:
                     "cmf": "negative",
                     "price_vs_vwap": "below",
                     "volume_filter": True,
-                    "stagger_window": 3
+                    "stagger_window": 3,
+                    "macd_increasing": True  # NEW: Only enter if MACD histogram is increasing (in negative direction)
                 }
             },
             "risk_management": {
                 "stop_loss": {"type": "ATR", "multiplier": 1.0},
-                "take_profit": {"type": "ATR", "multiplier": 1.15},  # Slight increase from 1.0 to 1.15
+                "take_profit": {"type": "ATR", "multiplier": 1.0},  # Back to original 1:1
                 "position_sizing": {
-                    "risk_per_trade": 50.0,  # Keep the same
+                    "risk_per_trade": 50.0,
                     "max_contracts": 10
                 }
             },
-          
             "execution_settings": {
                 "slippage_per_leg": 0.25,
                 "commission_per_contract": 1.0
             }
         }
+
+
+
+
+
         
         # MES contract specifications
         self.contract_specs = {
@@ -159,6 +165,11 @@ class MESFuturesTrifectaBacktester:
         df['macd_hist'] = df['macd'] - df['macd_signal']
         df['macd_hist_dir'] = df['macd_hist'].apply(lambda x: 'positive' if x > 0 else ('negative' if x < 0 else 'flat'))
         
+        # Add MACD histogram slope (increasing or decreasing)
+        df['macd_hist_prev'] = df['macd_hist'].shift(1)
+        df['macd_increasing'] = df['macd_hist'] > df['macd_hist_prev']
+
+
         # Calculate Money Flow (CMF)
         cmf_period = self.params['indicators']['money_flow']['period']
         high = df['high']
@@ -222,16 +233,18 @@ class MESFuturesTrifectaBacktester:
             (df['macd_hist_dir'] == 'positive') & 
             (df['cmf_dir'] == 'positive') & 
             (df['price_vs_vwap'] == 'above') & 
-            (df['vol_filter'] == True)
+            (df['vol_filter'] == True) &
+            (df['macd_increasing'] == True)  # NEW: MACD histogram must be increasing
         )
-        
+
         # Short signals
         df['short_signal'] = (
             (df['ema9_slope_dir'] == 'negative') & 
             (df['macd_hist_dir'] == 'negative') & 
             (df['cmf_dir'] == 'negative') & 
             (df['price_vs_vwap'] == 'below') & 
-            (df['vol_filter'] == True)
+            (df['vol_filter'] == True) &
+            (df['macd_increasing'] == True)  # NEW: MACD histogram must be increasing (more negative)
         )
         
         # Save the updated dataframe

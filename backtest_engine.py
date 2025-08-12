@@ -49,12 +49,13 @@ class MESFuturesTrifectaBacktester:
             },
             "risk_management": {
                 "stop_loss": {"type": "ATR", "multiplier": 1.0},
-                "take_profit": {"type": "ATR", "multiplier": 1.0},
+                "take_profit": {"type": "ATR", "multiplier": 1.15},  # Slight increase from 1.0 to 1.15
                 "position_sizing": {
-                    "risk_per_trade": 50.0,
+                    "risk_per_trade": 50.0,  # Keep the same
                     "max_contracts": 10
                 }
             },
+          
             "execution_settings": {
                 "slippage_per_leg": 0.25,
                 "commission_per_contract": 1.0

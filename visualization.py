@@ -40,8 +40,9 @@ def create_html_report(backtest_results_dir, output_file=None):
     fig = create_dashboard(trades_df, equity_df, metrics)
     
     # Write to HTML file
+    html_string = fig.to_html(include_plotlyjs=True, full_html=True)
     with open(output_file, 'w') as f:
-        f.write(fig.to_html(include_plotlyjs=True, full_html=True))
+        f.write(html_string)
     
     print(f"HTML report created: {output_file}")
     return output_file
@@ -116,4 +117,106 @@ def create_dashboard(trades_df, equity_df, metrics):
                     y=trade_exits['equity'],
                     mode='markers',
                     name='Trade Exit',
-                    marker=dict(color=colors, size=
+                    marker=dict(color=colors, size=8, symbol='circle')
+                ),
+                row=1, col=1
+            )
+    
+    # Add trade P&L chart
+    if not trades_df.empty:
+        colors = ['green' if pl > 0 else 'red' for pl in trades_df['profit_loss']]
+        fig.add_trace(
+            go.Bar(
+                x=trades_df['exit_time'],
+                y=trades_df['profit_loss'],
+                name='Trade P&L',
+                marker_color=colors
+            ),
+            row=2, col=1
+        )
+    
+    # Add win/loss pie chart
+    if not trades_df.empty and 'winning_trades' in metrics and 'losing_trades' in metrics:
+        winning = metrics['winning_trades']
+        losing = metrics['losing_trades']
+        
+        fig.add_trace(
+            go.Pie(
+                labels=['Winning Trades', 'Losing Trades'],
+                values=[winning, losing],
+                marker_colors=['green', 'red'],
+                textinfo='label+percent',
+                hole=0.4
+            ),
+            row=3, col=1
+        )
+    
+    # Add key metrics as a table
+    metrics_table = []
+    if metrics:
+        metrics_table = [
+            ["Total Trades", f"{metrics.get('total_trades', 0)}"],
+            ["Win Rate", f"{metrics.get('win_rate', 0):.2%}"],
+            ["Net Profit", f"${metrics.get('net_profit', 0):.2f}"],
+            ["Net Profit %", f"{metrics.get('net_profit_pct', 0):.2f}%"],
+            ["Profit Factor", f"{metrics.get('profit_factor', 0):.2f}"],
+            ["Max Drawdown", f"{metrics.get('max_drawdown', 0):.2f}%"],
+            ["Avg Win", f"${metrics.get('avg_win', 0):.2f}"],
+            ["Avg Loss", f"${abs(metrics.get('avg_loss', 0)):.2f}"]
+        ]
+    
+    fig.add_trace(
+        go.Table(
+            header=dict(
+                values=["Metric", "Value"],
+                fill_color='rgb(30, 30, 30)',
+                align='left',
+                font=dict(color='white', size=12)
+            ),
+            cells=dict(
+                values=list(zip(*metrics_table)),
+                fill_color='rgb(50, 50, 50)',
+                align='left',
+                font=dict(color='white', size=11)
+            )
+        ),
+        row=3, col=2
+    )
+    
+    # Update layout
+    fig.update_layout(
+        title="MES Futures Trifecta Strategy Backtest Results",
+        template="plotly_dark",
+        height=900,
+        width=1200,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    return fig
+
+def generate_trade_table_html(trades_df):
+    """Generate HTML table of trades"""
+    if trades_df.empty:
+        return "<p>No trades to display</p>"
+        
+    # Format DataFrame for display
+    display_df = trades_df.copy()
+    display_df['entry_time'] = display_df['entry_time'].dt.strftime('%Y-%m-%d %H:%M')
+    display_df['exit_time'] = display_df['exit_time'].dt.strftime('%Y-%m-%d %H:%M')
+    display_df['profit_loss'] = display_df['profit_loss'].map('${:.2f}'.format)
+    display_df['profit_loss_pct'] = display_df['profit_loss_pct'].map('{:.2f}%'.format)
+    display_df['entry_price'] = display_df['entry_price'].map('{:.2f}'.format)
+    display_df['exit_price'] = display_df['exit_price'].map('{:.2f}'.format)
+    display_df['stop_loss'] = display_df['stop_loss'].map('{:.2f}'.format)
+    display_df['take_profit'] = display_df['take_profit'].map('{:.2f}'.format)
+    
+    # Generate HTML table
+    trade_table_html = display_df.to_html(index=False, classes='table table-striped table-bordered table-hover')
+    return trade_table_html

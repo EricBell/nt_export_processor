@@ -83,17 +83,44 @@ class MESFuturesTrifectaBacktester:
             # Load data from CSV
             df = pd.read_csv(self.data_path)
             
-            # Ensure timestamp column exists and is in datetime format
-            if 'timestamp' not in df.columns:
-                raise ValueError("CSV must have a 'timestamp' column")
+            # Handle different timestamp column names
+            timestamp_col = None
+            for col_name in ['timestamp', 'DateTime', 'datetime', 'Timestamp']:
+                if col_name in df.columns:
+                    timestamp_col = col_name
+                    break
+            
+            if timestamp_col is None:
+                raise ValueError("CSV must have a timestamp/DateTime column")
+            
+            # Rename to standard 'timestamp' column
+            if timestamp_col != 'timestamp':
+                df = df.rename(columns={timestamp_col: 'timestamp'})
             
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             
-            # Check for required OHLCV columns
+            # Handle different OHLCV column name formats
+            column_mapping = {}
             required_cols = ['open', 'high', 'low', 'close', 'volume']
-            for col in required_cols:
-                if col not in df.columns:
-                    raise ValueError(f"CSV must have {col} column")
+            
+            for required_col in required_cols:
+                found_col = None
+                # Check both lowercase and capitalized versions
+                for col_variant in [required_col, required_col.capitalize(), required_col.upper()]:
+                    if col_variant in df.columns:
+                        found_col = col_variant
+                        break
+                
+                if found_col is None:
+                    raise ValueError(f"CSV must have {required_col} column (tried: {required_col}, {required_col.capitalize()}, {required_col.upper()})")
+                
+                # Map to lowercase standard
+                if found_col != required_col:
+                    column_mapping[found_col] = required_col
+            
+            # Rename columns to standard lowercase format
+            if column_mapping:
+                df = df.rename(columns=column_mapping)
             
             # Extract session date for VWAP calculations
             df['date'] = df['timestamp'].dt.date

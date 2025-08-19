@@ -1,8 +1,16 @@
-# nt_export_processor
+# NinjaTrader Export Processing Toolkit
 
-A Python utility to process exported historical data from NinjaTrader 8 (NT8). This script loads NT8 CSV exports, cleans the data, resamples to common intraday bar sizes, computes technical indicators, and provides plotting and export capabilities.
+A comprehensive Python toolkit for processing and analyzing NinjaTrader 8 (NT8) exported data. This suite includes three specialized tools for data processing, resampling, and trading signal generation.
 
-## Requirements
+## Overview
+
+This toolkit consists of three main components:
+
+1. **`nt_export_processor.py`** - Main data processor with technical indicators and charting
+2. **`resample_1m_to_3m.py`** - Specialized resampling utility with time gap analysis  
+3. **`trifecta_signals.py`** - Trading signal generator using multi-factor analysis
+
+## Installation
 
 Install the required dependencies:
 
@@ -18,9 +26,11 @@ pip install -r requirements.txt
 - typer - CLI framework
 - pyarrow - Parquet file support
 
-## Usage
+## 1. Main Processor (`nt_export_processor.py`)
 
-### Command Line Interface
+The primary tool for processing NinjaTrader exports with full technical analysis capabilities.
+
+### Usage
 
 ```bash
 python nt_export_processor.py [INPUT_FILE] [OPTIONS]
@@ -42,37 +52,27 @@ python nt_export_processor.py [INPUT_FILE] [OPTIONS]
 
 Basic usage:
 ```bash
-python nt_export_processor.py data/MES-1-day-sample.txt
+python nt_export_processor.py data/MES\ 09-25.Last.txt
 ```
 
 With custom options:
 ```bash
-python nt_export_processor.py data/MES-1-day-sample.txt --out ./results --resample 5min --tz America/New_York --fmt csv
+python nt_export_processor.py "data/MES 09-25.Last.txt" --out ./results --resample 5min --tz America/New_York --fmt csv
 ```
 
 Skip plotting (useful for headless environments):
 ```bash
-python nt_export_processor.py data/MES-1-day-sample.txt --no-plot
+python nt_export_processor.py "data/MES 09-25.Last.txt" --no-plot
 ```
 
 Resample-only mode (for preprocessing):
 ```bash
-python nt_export_processor.py data/MES-1-day-sample.txt --resample 3min --resample-only
-```
-
-Process previously resampled file:
-```bash
-python nt_export_processor.py output/MES-1-day-sample_3min.csv --resample 15min --resample-only
+python nt_export_processor.py "data/MES 09-25.Last.txt" --resample 3min --resample-only
 ```
 
 Full analysis with HTML plot (ideal for WSL/headless):
 ```bash
 python nt_export_processor.py data/processed_3min.parquet --resample 15min --save-plot
-```
-
-Analysis without resampling (when timeframes match):
-```bash
-python nt_export_processor.py data/processed_3min.parquet --resample 3min --save-plot
 ```
 
 ### Input Data Format
@@ -125,48 +125,134 @@ The script automatically detects the format and loads accordingly.
   - Works in headless/WSL environments
 - **Export Options**: Save processed data as Parquet or CSV files
 
-### Python API
+### Output
 
-You can also use the functions directly in Python:
-
-```python
-from nt_export_processor import (
-    detect_file_format, load_ninjatrader_csv, load_resampled_csv, 
-    load_parquet_file, resample_bars, add_indicators, generate_resampled_filename
-)
-
-# Auto-detect and load data
-file_format, detected_timeframe = detect_file_format('data/processed_3min.parquet')
-if file_format == 'nt8':
-    df = load_ninjatrader_csv('data/export.csv', tz='America/New_York')
-elif file_format == 'resampled':
-    df = load_resampled_csv('data/export.csv', tz='America/New_York')
-elif file_format == 'parquet':
-    df = load_parquet_file('data/processed_3min.parquet', tz='America/New_York')
-
-# Smart resampling (skips if timeframes match)
-target_timeframe = '5min'
-if detected_timeframe and detected_timeframe.lower() == target_timeframe.lower():
-    bars = df.copy()  # Skip resampling
-else:
-    bars = resample_bars(df, target_timeframe)
-
-# For full processing: add technical indicators
-bars_with_indicators = add_indicators(bars)
-```
-
-## Output
-
-### Full Processing Mode
+#### Full Processing Mode
 - OHLCV price data with technical indicators (EMA, MACD, ATR, CMF)
 - Interactive charts saved as HTML files (`chart_{timeframe}.html`)
 - Exported processed data in specified format (Parquet or CSV)
 
-### Resample-Only Mode
+#### Resample-Only Mode
 - Pure OHLCV resampled data (no indicators)
 - CSV format with descriptive filename: `{input_name}_{timeframe}.csv`
-- Example: `MES-1-day-sample.txt` → `MES-1-day-sample_3min.csv`
+- Example: `MES 09-25.Last.txt` → `MES-09-25.Last_3min.csv`
 - Optimized for preprocessing large datasets
+
+## 2. Resampling Tool (`resample_1m_to_3m.py`)
+
+Specialized command-line tool for efficient data resampling and time gap analysis.
+
+### Usage
+
+```bash
+python resample_1m_to_3m.py --input [INPUT_FILE] [OPTIONS]
+```
+
+#### Features
+- **Resample Feature**: Convert 1-minute data to any timeframe (3min default)
+- **Deltas Feature**: Analyze time gaps and frequency in processed data
+- **Timezone Support**: Convert between timezones
+- **Format Support**: CSV and Parquet input/output
+
+#### Examples
+
+Resample to 3-minute bars:
+```bash
+python resample_1m_to_3m.py --input "data/MES 09-25.Last.txt" --output output/mes_3m.parquet --tz America/New_York
+```
+
+Resample to different timeframe:
+```bash
+python resample_1m_to_3m.py --input "data/MES 09-25.Last.txt" --output output/mes_5m.csv --resample-rule 5T --out-format csv
+```
+
+Analyze time gaps in processed data:
+```bash
+python resample_1m_to_3m.py --input output/mes_3m.parquet --feature deltas
+```
+
+#### Options
+- `--input` - Input file path (required)
+- `--output` - Output file path (required for resample feature)
+- `--feature` - 'resample' (default) or 'deltas'
+- `--tz` - Timezone (default: America/New_York)
+- `--resample-rule` - Pandas rule like '3T', '5T', '1H' (default: 3T)
+- `--out-format` - 'csv' or 'parquet' (auto-detected from extension)
+- `--preview` - Show preview of resampled data
+- `--datetime-format` - Custom datetime parsing format
+
+## 3. Trading Signals (`trifecta_signals.py`)
+
+Generate trading signals using the "trifecta" strategy that combines multiple technical factors.
+
+### Python API Usage
+
+```python
+from trifecta_signals import generate_trifecta_signals
+import pandas as pd
+
+# Load your OHLCV data
+df = pd.read_parquet('data/processed_3min.parquet')
+
+# Generate trifecta signals
+signals_df = generate_trifecta_signals(df)
+
+# View signals
+buy_signals = signals_df[signals_df['trifecta_signal'] == 1]
+sell_signals = signals_df[signals_df['trifecta_signal'] == -1]
+
+print(f"Generated {len(buy_signals)} buy signals and {len(sell_signals)} sell signals")
+```
+
+### Trifecta Strategy Components
+
+The strategy requires all four conditions to align:
+
+1. **Trend Line (EMA 9)**: Price direction confirmation
+   - Bull: EMA slope positive over 3 periods
+   - Bear: EMA slope negative over 3 periods
+
+2. **MACD Momentum**: Momentum confirmation
+   - Bull: MACD histogram > 0
+   - Bear: MACD histogram < 0
+
+3. **Money Flow**: Volume-price analysis
+   - **CMF Mode**: Chaikin Money Flow > 0 (bull) or < 0 (bear)
+   - **ADL Mode**: Accumulation/Distribution Line increasing (bull) or decreasing (bear)
+
+4. **Volume Confirmation**: Significant volume required
+   - Current volume > 1.25x 20-period average
+
+### Signal Output
+
+The function returns a DataFrame with additional columns:
+- `TL`, `TL_slope` - Trend line and slope
+- `MACD`, `MACD_signal`, `MACD_hist` - MACD components  
+- `MoneyFlow` - CMF or ADL values
+- `VolumeConfirm` - Boolean volume condition
+- `trifecta_signal` - 1 (bull), -1 (bear), 0 (no signal)
+- `trifecta_reason` - Human-readable signal explanation
+
+### Example Integration
+
+```python
+# Complete workflow example
+from nt_export_processor import load_ninjatrader_csv, resample_bars, add_indicators
+from trifecta_signals import generate_trifecta_signals
+
+# 1. Load and process data
+df = load_ninjatrader_csv('data/MES 09-25.Last.txt', tz='America/New_York')
+bars_3min = resample_bars(df, '3min')
+
+# 2. Generate signals
+signals = generate_trifecta_signals(bars_3min)
+
+# 3. Analyze results
+active_signals = signals[signals['trifecta_signal'] != 0]
+print(f"Found {len(active_signals)} trifecta signals:")
+for idx, row in active_signals.tail(5).iterrows():
+    print(f"{idx}: {row['trifecta_reason']}")
+```
 
 ## Interactive Chart Features
 
@@ -205,3 +291,56 @@ CMF is particularly useful for:
 - Confirming price trends with volume
 - Identifying potential reversals when diverging from price
 - Spotting accumulation/distribution phases
+
+## Sample Workflows
+
+### 1. Full Analysis Pipeline
+```bash
+# Step 1: Process NT8 export to 3min with indicators and chart
+python nt_export_processor.py "data/MES 09-25.Last.txt" --resample 3min --save-plot
+
+# Step 2: Generate trading signals
+python -c "
+from nt_export_processor import load_parquet_file
+from trifecta_signals import generate_trifecta_signals
+df = load_parquet_file('output/processed_3min.parquet')
+signals = generate_trifecta_signals(df)
+print('Signals:', len(signals[signals['trifecta_signal'] != 0]))
+"
+```
+
+### 2. Multi-Timeframe Analysis
+```bash
+# Generate multiple timeframes for analysis
+python nt_export_processor.py "data/MES 09-25.Last.txt" --resample 1min --resample-only
+python nt_export_processor.py "output/MES-09-25.Last_1min.csv" --resample 3min --resample-only  
+python nt_export_processor.py "output/MES-09-25.Last_3min.csv" --resample 15min --save-plot
+```
+
+### 3. Headless Processing (WSL/Server)
+```bash
+# Process data without display, save charts as HTML
+python nt_export_processor.py "data/MES 09-25.Last.txt" --resample 5min --no-plot --save-plot
+# Open output/chart_5min.html in any browser
+```
+
+## File Structure
+
+```
+nt_export_processor/
+├── nt_export_processor.py    # Main processor
+├── resample_1m_to_3m.py      # Resampling utility
+├── trifecta_signals.py       # Trading signals
+├── requirements.txt          # Dependencies
+├── data/                     # Input data
+│   ├── MES 09-25.Last.txt   # Sample NT8 export
+│   └── sample               # Sample data snippet
+└── output/                   # Generated outputs
+    ├── processed_*.parquet  # Processed data
+    ├── chart_*.html        # Interactive charts
+    └── *_resampled.csv     # Resampled data
+```
+
+## To-Do Items
+
+- Remove SMA 10, 20, 30 and EMA 21 (completed - now uses EMA 9 only)

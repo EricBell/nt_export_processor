@@ -2,15 +2,22 @@
 """
 resample_1m_to_3m.py
 
-Command-line tool (Typer) to load a NinjaTrader 1-minute export in the format:
-  date time;open;hi;low;close;volume
-(e.g. 20250612 040100;6062.5;6062.5;6062.25;6062.5;14)
+Command-line tool (Typer) with two features:
+1. Resample: Load a NinjaTrader 1-minute export in the format:
+   date time;open;hi;low;close;volume
+   (e.g. 20250612 040100;6062.5;6062.5;6062.25;6062.5;14)
+   Resamples to 3-minute OHLCV bars and writes output to CSV or Parquet.
 
-It resamples to 3-minute OHLCV bars and writes output to CSV or Parquet.
+2. Deltas: Analyze time intervals in a parquet file with datetime index.
+   Shows row count, index type, frequency, and time delta statistics.
 
 Usage examples:
+  # Resample feature (default)
   python resample_1m_to_3m.py --input data/mes_1m_noheader.csv --output output/mes_3m.parquet --tz America/New_York
   python resample_1m_to_3m.py -i data/mes_1m.csv -o output/mes_3m.csv --out-format csv --datetime-format "%Y%m%d %H%M%S"
+  
+  # Deltas feature
+  python resample_1m_to_3m.py --input data/mes_3m.parquet --feature deltas
 
 Dependencies:
   pip install typer[all] pandas pyarrow
@@ -89,10 +96,27 @@ def resample_ohlcv(df: pd.DataFrame,
         bars = bars.dropna(subset=['Open', 'High', 'Low', 'Close'])
     return bars
 
+def deltas_analysis(input_path: pathlib.Path) -> None:
+    """
+    Analyze time deltas in a parquet file and print statistics.
+    """
+    df = pd.read_parquet(input_path)
+    typer.echo(f"rows: {len(df)}")
+    typer.echo(f"index type: {type(df.index)}")
+    typer.echo(f"index sample: {df.index[:10].tolist()}")
+    typer.echo(f"inferred freq: {pd.infer_freq(df.index)}")
+    
+    # show actual diffs in seconds
+    deltas = (df.index.to_series().diff().dropna().dt.total_seconds()).value_counts().head(10)
+    typer.echo("Time deltas (seconds) - top 10:")
+    for seconds, count in deltas.items():
+        typer.echo(f"  {seconds}s: {count} occurrences")
+
 @app.command()
 def main(
-    input: pathlib.Path = typer.Option(..., help="Path to input 1-minute file (semicolon-delimited, no header)"),
-    output: pathlib.Path = typer.Option(..., help="Path to output file (CSV or Parquet). Use .csv or .parquet extension"),
+    input: pathlib.Path = typer.Option(..., help="Path to input file (semicolon-delimited CSV for resample, parquet for deltas)"),
+    output: Optional[pathlib.Path] = typer.Option(None, help="Path to output file (CSV or Parquet). Required for resample feature"),
+    feature: str = typer.Option("resample", help="Feature to run: 'resample' (default) or 'deltas'"),
     datetime_format: Optional[str] = typer.Option(None, help=f"Datetime format strptime string (default {DEFAULT_DT_FORMAT})"),
     tz: Optional[str] = typer.Option("America/New_York", help="Timezone to localize naive datetimes (e.g., America/New_York). Use empty string to keep naive"),
     resample_rule: str = typer.Option("3T", help="Pandas resample rule, default '3T' for 3-minute"),
@@ -102,48 +126,65 @@ def main(
     preview: bool = typer.Option(False, help="Print a short preview of the resampled output"),
 ):
     """
-    CLI entry: resample 1-minute NinjaTrader export (no header) to 3-minute OHLCV.
+    CLI entry: resample 1-minute NinjaTrader export (no header) to 3-minute OHLCV or analyze time deltas.
     """
     try:
         if not input.exists():
             typer.echo(f"Input file not found: {input}", err=True)
             raise typer.Exit(code=1)
 
-        dt_fmt = datetime_format if datetime_format else DEFAULT_DT_FORMAT
+        # Branch based on feature selection
+        if feature == "deltas":
+            # Deltas feature: analyze time gaps in parquet file
+            if not input.suffix.lower() in ['.parquet', '.parq', '.pq']:
+                typer.echo(f"Warning: deltas feature expects parquet input, got {input.suffix}", err=True)
+            deltas_analysis(input)
+            return
+        
+        elif feature == "resample":
+            # Original resample feature
+            if output is None:
+                typer.echo("Error: --output is required for resample feature", err=True)
+                raise typer.Exit(code=1)
+                
+            dt_fmt = datetime_format if datetime_format else DEFAULT_DT_FORMAT
 
-        # load
-        df1 = load_no_header_semicolon(input, datetime_format=dt_fmt, tz=tz if tz else None)
+            # load
+            df1 = load_no_header_semicolon(input, datetime_format=dt_fmt, tz=tz if tz else None)
 
-        typer.echo(f"Loaded rows: {len(df1)}; start: {df1.index.min()} end: {df1.index.max()}")
+            typer.echo(f"Loaded rows: {len(df1)}; start: {df1.index.min()} end: {df1.index.max()}")
 
-        # resample
-        bars = resample_ohlcv(df1, rule=resample_rule, drop_empty=drop_empty, fill_method=fill_method)
+            # resample
+            bars = resample_ohlcv(df1, rule=resample_rule, drop_empty=drop_empty, fill_method=fill_method)
 
-        typer.echo(f"Resampled to {resample_rule} bars: {len(bars)}; start: {bars.index.min()} end: {bars.index.max()}")
+            typer.echo(f"Resampled to {resample_rule} bars: {len(bars)}; start: {bars.index.min()} end: {bars.index.max()}")
 
-        # determine output format
-        if out_format:
-            fmt = out_format.lower()
-        else:
-            suffix = output.suffix.lower()
-            if suffix in ['.csv']:
-                fmt = 'csv'
-            elif suffix in ['.parquet', '.parq', '.pq']:
-                fmt = 'parquet'
+            # determine output format
+            if out_format:
+                fmt = out_format.lower()
             else:
-                # default to parquet
-                fmt = 'parquet'
-        # save
-        output.parent.mkdir(parents=True, exist_ok=True)
-        if fmt == 'csv':
-            bars.to_csv(output, index=True)
-        else:
-            bars.to_parquet(output, index=True)
-        typer.echo(f"Wrote {len(bars)} bars to {output} as {fmt.upper()}")
+                suffix = output.suffix.lower()
+                if suffix in ['.csv']:
+                    fmt = 'csv'
+                elif suffix in ['.parquet', '.parq', '.pq']:
+                    fmt = 'parquet'
+                else:
+                    # default to parquet
+                    fmt = 'parquet'
+            # save
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if fmt == 'csv':
+                bars.to_csv(output, index=True)
+            else:
+                bars.to_parquet(output, index=True)
+            typer.echo(f"Wrote {len(bars)} bars to {output} as {fmt.upper()}")
 
-        if preview:
-            typer.echo("\nPreview (last 10 bars):")
-            typer.echo(bars.tail(10).to_string())
+            if preview:
+                typer.echo("\nPreview (last 10 bars):")
+                typer.echo(bars.tail(10).to_string())
+        else:
+            typer.echo(f"Error: Unknown feature '{feature}'. Use 'resample' or 'deltas'", err=True)
+            raise typer.Exit(code=1)
 
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
